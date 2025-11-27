@@ -22,7 +22,7 @@ const getClient = () => {
 
     // 如果您是在 StackBlitz 预览或本地运行且没配置环境变量，请在此处填入您的 Key
     if (!apiKey || apiKey === 'YOUR_API_KEY_HERE') {
-        apiKey = ''; // 在此处填入您的 Key，如 'AIzaSy...'
+        apiKey = 'AIzaSyAoaiREKij6_g0PdeuyoCz8giX7J6hMbR4'; // 在此处填入您的 Key，如 'AIzaSy...'
     }
 
     if (!apiKey) {

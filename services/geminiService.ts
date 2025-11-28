@@ -6,13 +6,13 @@ import { AI_MODEL_NAME } from '../constants';
 const getApiKey = () => {
     let apiKey = '';
     try {
-        // 优先检查 Vite 环境变量 (手机端/Vercel构建)
+        // 1. 检查 Vite 环境变量 (手机端/Vercel构建)
         // @ts-ignore
         if (import.meta && import.meta.env && import.meta.env.VITE_API_KEY) {
             // @ts-ignore
             apiKey = import.meta.env.VITE_API_KEY;
         } 
-        // 其次检查 Node 环境变量 (本地/服务端)
+        // 2. 检查 Node 环境变量 (本地/服务端)
         // @ts-ignore
         else if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
             // @ts-ignore
@@ -25,8 +25,15 @@ const getApiKey = () => {
         apiKey = ''; 
     }
     
+    // 调试日志：帮助排查 Key 是否读取成功
+    if (apiKey) {
+        console.log(`[GeminiService] API Key loaded: ${apiKey.substring(0, 8)}...`);
+    } else {
+        console.error("[GeminiService] API Key NOT found!");
+    }
+    
     if (!apiKey) {
-        throw new Error("API Key 未配置。请在 Vercel 后台 Environment Variables 中添加 VITE_API_KEY。");
+        throw new Error("API Key 未配置。请在 Vercel 后台添加 VITE_API_KEY 变量，并重新部署 (Redeploy)。");
     }
     return apiKey;
 };
@@ -36,7 +43,8 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
     const apiKey = getApiKey();
     // 强制使用相对路径 /google-api，这会被 vercel.json 拦截并转发到 Google
     const baseUrl = '/google-api/v1beta/models';
-    const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
+    // 注意：这里不再在 URL 中拼接 ?key=，改为在 Header 中发送
+    const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent`;
 
     const body: any = {
         contents: [{
@@ -56,7 +64,8 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
         const response = await fetch(url, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey // 使用 Header 传递 Key，避免代理丢失参数
             },
             body: JSON.stringify(body)
         });
@@ -66,7 +75,8 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
             if (response.status === 404) {
                 errorMsg = "网络路径错误 (404)。请检查 vercel.json 是否已上传至 GitHub 根目录。";
             } else if (response.status === 403) {
-                errorMsg = "权限拒绝 (403)。Vercel 后台填写的 VITE_API_KEY 可能无效。";
+                // 403 错误通常意味着 Key 虽然发过去了，但 Google 拒绝了
+                errorMsg = "权限拒绝 (403)。可能原因：1. VITE_API_KEY 填写错误 2. Google Cloud 中未启用 Generative Language API 3. Key 有 IP 限制 (Vercel IP 被挡)";
             } else if (response.status === 504) {
                 errorMsg = "请求超时。请重试。";
             }
@@ -85,8 +95,9 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
         return JSON.parse(text);
     } catch (error: any) {
         console.error("Gemini Fetch Error:", error);
-        if (error.message && error.message.includes("Failed to fetch")) {
-             throw new Error("网络连接失败。请检查：1. vercel.json 是否存在 2. 手机网络是否正常");
+        // 如果是 fetch 本身抛出的网络错误（不是 4xx/5xx）
+        if (error.message && (error.message.includes("Failed to fetch") || error.message.includes("NetworkError"))) {
+             throw new Error("网络连接失败。请检查：vercel.json 是否存在于 GitHub 根目录？");
         }
         throw error;
     }

@@ -1,235 +1,195 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
 import { ClinicalMarkers, Patient, TreatmentOption, DetailedRegimenPlan } from '../types';
 import { AI_MODEL_NAME } from '../constants';
 
-const getClient = () => {
-    // 获取 API Key
-    // 兼容 Vercel 环境变量 (process.env) 和 Vite 环境变量 (import.meta.env)
+// 获取 API Key
+const getApiKey = () => {
     let apiKey = '';
-    
     try {
+        // 优先检查 Vite 环境变量 (手机端/Vercel构建)
         // @ts-ignore
-        if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+        if (import.meta && import.meta.env && import.meta.env.VITE_API_KEY) {
+            // @ts-ignore
+            apiKey = import.meta.env.VITE_API_KEY;
+        } 
+        // 其次检查 Node 环境变量 (本地/服务端)
+        // @ts-ignore
+        else if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
             // @ts-ignore
             apiKey = process.env.API_KEY;
-        } else if (import.meta && (import.meta as any).env && (import.meta as any).env.VITE_API_KEY) {
-            apiKey = (import.meta as any).env.VITE_API_KEY;
         }
-    } catch (e) {
-        console.warn("Error reading environment variables", e);
-    }
+    } catch (e) {}
 
-    // 如果您是在 StackBlitz 预览或本地运行且没配置环境变量，请在此处填入您的 Key
+    // 最后的后备（如果环境变量未生效，仅供测试）
     if (!apiKey || apiKey === 'YOUR_API_KEY_HERE') {
-        apiKey = 'AIzaSyAoaiREKij6_g0PdeuyoCz8giX7J6hMbR4'; // 在此处填入您的 Key，如 'AIzaSy...'
+        apiKey = ''; 
     }
-
+    
     if (!apiKey) {
-         throw new Error("API Key 未配置。请在 Vercel 环境变量中添加 API_KEY，或在 services/geminiService.ts 中填入。");
+        throw new Error("API Key 未配置。请在 Vercel 后台 Environment Variables 中添加 VITE_API_KEY。");
+    }
+    return apiKey;
+};
+
+// 核心通用请求函数 (使用原生 fetch 替代 SDK)
+const callGeminiApi = async (prompt: string, schema?: any) => {
+    const apiKey = getApiKey();
+    // 强制使用相对路径 /google-api，这会被 vercel.json 拦截并转发到 Google
+    const baseUrl = '/google-api/v1beta/models';
+    const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
+
+    const body: any = {
+        contents: [{
+            parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+            temperature: 0.4,
+            responseMimeType: "application/json"
+        }
+    };
+
+    if (schema) {
+        body.generationConfig.responseSchema = schema;
     }
 
-    // 关键修改：使用 baseUrl 指向 Vercel 的代理路径 '/google-api'
-    // 这样请求会发给 Vercel 服务器，由 Vercel 转发给 Google，从而绕过客户端的网络限制。
-    return new GoogleGenAI({ 
-        apiKey,
-        baseUrl: '/google-api' 
-    } as any);
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+
+        if (!response.ok) {
+            let errorMsg = `API 请求失败: ${response.status} ${response.statusText}`;
+            if (response.status === 404) {
+                errorMsg = "网络路径错误 (404)。请检查 vercel.json 是否已上传至 GitHub 根目录。";
+            } else if (response.status === 403) {
+                errorMsg = "权限拒绝 (403)。Vercel 后台填写的 VITE_API_KEY 可能无效。";
+            } else if (response.status === 504) {
+                errorMsg = "请求超时。请重试。";
+            }
+            throw new Error(errorMsg);
+        }
+
+        const data = await response.json();
+        
+        // 解析 Gemini REST API 的返回结构
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) {
+            console.error("Gemini Raw Response:", data);
+            throw new Error("AI 返回了空数据，请稍后重试");
+        }
+
+        return JSON.parse(text);
+    } catch (error: any) {
+        console.error("Gemini Fetch Error:", error);
+        if (error.message && error.message.includes("Failed to fetch")) {
+             throw new Error("网络连接失败。请检查：1. vercel.json 是否存在 2. 手机网络是否正常");
+        }
+        throw error;
+    }
 };
 
 export const generateTreatmentOptions = async (patient: Patient, markers: ClinicalMarkers): Promise<TreatmentOption[]> => {
-    try {
-        const ai = getClient();
-        const prompt = `
-        作为一名乳腺外科专家，请根据患者数据制定 **2-3种** 不同的总体治疗路径选项（例如：标准方案、强化方案、或降阶梯方案）。
-        
-        患者信息：
-        - 年龄: ${patient.age}, 绝经: ${markers.menopause ? '是' : '否'}
-        - 诊断: ${patient.diagnosis}
-        - 病理: ER:${markers.erStatus}, PR:${markers.prStatus}, HER2:${markers.her2Status}, Ki67:${markers.ki67}, T:${markers.tumorSize}, N:${markers.nodeStatus}
-        
-        请返回JSON格式。每个方案需包含：标题、图标类型(surgery/chemo/drug/observation)、详细描述、预估时长、优缺点。
-        
-        重要：请严格依据 NCCN 或 CSCO 乳腺癌诊疗指南，综合评估复发风险，将**最标准、最推荐**的一个方案的 'recommended' 字段设为 true。通常情况下只有一个方案被标记为推荐。
-        `;
+    const prompt = `
+    作为一名乳腺外科专家，请根据患者数据制定 **2-3种** 不同的总体治疗路径选项（例如：标准方案、强化方案、或降阶梯方案）。
+    
+    患者信息：
+    - 年龄: ${patient.age}, 绝经: ${markers.menopause ? '是' : '否'}
+    - 诊断: ${patient.diagnosis}
+    - 病理: ER:${markers.erStatus}, PR:${markers.prStatus}, HER2:${markers.her2Status}, Ki67:${markers.ki67}, T:${markers.tumorSize}, N:${markers.nodeStatus}
+    
+    请返回JSON格式。每个方案需包含：标题、图标类型(surgery/chemo/drug/observation)、详细描述、预估时长、优缺点。
+    
+    重要：请严格依据 NCCN 或 CSCO 乳腺癌诊疗指南，综合评估复发风险，将**最标准、最推荐**的一个方案的 'recommended' 字段设为 true。通常情况下只有一个方案被标记为推荐。
+    `;
 
-        const response = await ai.models.generateContent({
-            model: AI_MODEL_NAME,
-            contents: prompt,
-            config: {
-                temperature: 0.4,
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            id: { type: Type.STRING, description: "Unique ID like plan_1" },
-                            title: { type: Type.STRING, description: "Short title of the plan, e.g. 'AC-T Chemo + Surgery'" },
-                            iconType: { 
-                                type: Type.STRING, 
-                                enum: ["surgery", "chemo", "drug", "observation"],
-                                description: "Type of icon to display" 
-                            },
-                            description: { type: Type.STRING, description: "Detailed clinical description" },
-                            duration: { type: Type.STRING, description: "Estimated duration, e.g. '6 months'" },
-                            pros: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            cons: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            recommended: { type: Type.BOOLEAN, description: "Is this the most standard recommendation?" }
-                        },
-                        required: ["id", "title", "iconType", "description", "recommended"]
-                    }
-                }
-            }
-        });
-
-        const jsonText = response.text;
-        if (!jsonText) throw new Error("AI 返回内容为空");
-        
-        return JSON.parse(jsonText) as TreatmentOption[];
-
-    } catch (error: any) {
-        console.error("Gemini API Error:", error);
-        // 友好的错误提示
-        let msg = error.message || "连接 AI 服务失败";
-        if (msg.includes("404") || msg.includes("not found")) {
-             msg = "网络请求失败 (404)。请确保 vercel.json 已上传且 API 路径配置正确。";
-        } else if (msg.includes("403")) {
-             msg = "权限拒绝 (403)。请检查 API Key 是否正确以及 Google Cloud 权限。";
-        } else if (msg.includes("Failed to fetch")) {
-             msg = "网络连接中断。请检查网络或 Vercel 代理配置。";
+    // REST API Schema 定义 (JSON Schema 格式)
+    const schema = {
+        type: "ARRAY",
+        items: {
+            type: "OBJECT",
+            properties: {
+                id: { type: "STRING", description: "Unique ID like plan_1" },
+                title: { type: "STRING", description: "Short title of the plan" },
+                iconType: { 
+                    type: "STRING", 
+                    enum: ["surgery", "chemo", "drug", "observation"]
+                },
+                description: { type: "STRING" },
+                duration: { type: "STRING" },
+                pros: { type: "ARRAY", items: { type: "STRING" } },
+                cons: { type: "ARRAY", items: { type: "STRING" } },
+                recommended: { type: "BOOLEAN" }
+            },
+            required: ["id", "title", "iconType", "description", "recommended"]
         }
-        throw new Error(msg);
-    }
+    };
+
+    return await callGeminiApi(prompt, schema) as TreatmentOption[];
 };
 
 export const generateDetailedRegimens = async (patient: Patient, markers: ClinicalMarkers, highLevelPlan: TreatmentOption): Promise<DetailedRegimenPlan | null> => {
-    try {
-        const ai = getClient();
-        const prompt = `
-        基于已选定的总体治疗路径："${highLevelPlan.title}" (${highLevelPlan.description})，
-        请为该乳腺癌患者提供具体的药物/治疗方案选项。
-        
-        患者数据：
-        - 年龄: ${patient.age}, 绝经: ${markers.menopause ? '是' : '否'}
-        - 分型: ${patient.subtype}
-        - 病理: ER:${markers.erStatus}, HER2:${markers.her2Status}, T:${markers.tumorSize}, N:${markers.nodeStatus}
-        
-        请分别为 化疗(chemo)、内分泌(endocrine)、靶向(target)、免疫(immune) 四个类别提供 1-3 个具体方案选项。
-        
-        重要：对于化疗、靶向和免疫方案，请务必在 'drugs' 字段中详细列出该方案包含的药物明细。
-        - 对于化疗，通常使用体表面积 (mg/m2)。
-        - 对于靶向药（如曲妥珠单抗），请注明是负荷剂量还是维持剂量，或使用标准参考值 (如 mg/kg 或 mg 固定剂量)。
-        - 单位请统一使用：'mg/m2', 'mg/kg', 或 'mg'。
-        - 请提供总周期数 (totalCycles) 和 单周期天数 (frequencyDays) 以便生成日程表。
-        `;
+    const prompt = `
+    基于已选定的总体治疗路径："${highLevelPlan.title}" (${highLevelPlan.description})，
+    请为该乳腺癌患者提供具体的药物/治疗方案选项。
+    
+    患者数据：
+    - 年龄: ${patient.age}, 绝经: ${markers.menopause ? '是' : '否'}
+    - 分型: ${patient.subtype}
+    - 病理: ER:${markers.erStatus}, HER2:${markers.her2Status}, T:${markers.tumorSize}, N:${markers.nodeStatus}
+    
+    请分别为 化疗(chemo)、内分泌(endocrine)、靶向(target)、免疫(immune) 四个类别提供 1-3 个具体方案选项。
+    
+    重要：对于化疗、靶向和免疫方案，请务必在 'drugs' 字段中详细列出该方案包含的药物明细。
+    - 单位请统一使用：'mg/m2', 'mg/kg', 或 'mg'。
+    - 请提供总周期数 (totalCycles) 和 单周期天数 (frequencyDays)。
+    `;
 
-        const drugSchema = {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    name: { type: Type.STRING },
-                    standardDose: { type: Type.NUMBER, description: "Standard dose value" },
-                    unit: { type: Type.STRING, description: "Unit: mg/m2, mg/kg, or mg" }
-                },
-                required: ["name", "standardDose", "unit"]
-            }
-        };
+    const drugSchema = {
+        type: "ARRAY",
+        items: {
+            type: "OBJECT",
+            properties: {
+                name: { type: "STRING" },
+                standardDose: { type: "NUMBER" },
+                unit: { type: "STRING" }
+            },
+            required: ["name", "standardDose", "unit"]
+        }
+    };
 
-        const response = await ai.models.generateContent({
-            model: AI_MODEL_NAME,
-            contents: prompt,
-            config: {
-                temperature: 0.2, 
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        chemoOptions: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    id: { type: Type.STRING },
-                                    name: { type: Type.STRING, description: "Regimen name e.g. 'AC-T'" },
-                                    description: { type: Type.STRING, description: "Drugs involved" },
-                                    cycle: { type: Type.STRING, description: "Cycle info e.g. 'q2w x 4'" },
-                                    type: { type: Type.STRING, enum: ["chemo"] },
-                                    recommended: { type: Type.BOOLEAN },
-                                    drugs: drugSchema,
-                                    totalCycles: { type: Type.INTEGER, description: "Total number of cycles" },
-                                    frequencyDays: { type: Type.INTEGER, description: "Days per cycle, e.g. 14 or 21" }
-                                },
-                                required: ["id", "name", "description", "type", "recommended"]
-                            }
-                        },
-                        endocrineOptions: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    id: { type: Type.STRING },
-                                    name: { type: Type.STRING },
-                                    description: { type: Type.STRING },
-                                    cycle: { type: Type.STRING },
-                                    type: { type: Type.STRING, enum: ["endocrine"] },
-                                    recommended: { type: Type.BOOLEAN },
-                                    totalCycles: { type: Type.INTEGER, description: "Total count (1 for continuous)" },
-                                    frequencyDays: { type: Type.INTEGER, description: "Days between (0 for continuous)" }
-                                },
-                                required: ["id", "name", "description", "type", "recommended"]
-                            }
-                        },
-                        targetOptions: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    id: { type: Type.STRING },
-                                    name: { type: Type.STRING },
-                                    description: { type: Type.STRING },
-                                    cycle: { type: Type.STRING },
-                                    type: { type: Type.STRING, enum: ["target"] },
-                                    recommended: { type: Type.BOOLEAN },
-                                    drugs: drugSchema,
-                                    totalCycles: { type: Type.INTEGER, description: "Total number of cycles" },
-                                    frequencyDays: { type: Type.INTEGER, description: "Days per cycle" }
-                                },
-                                required: ["id", "name", "description", "type", "recommended"]
-                            }
-                        },
-                        immuneOptions: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    id: { type: Type.STRING },
-                                    name: { type: Type.STRING },
-                                    description: { type: Type.STRING },
-                                    cycle: { type: Type.STRING },
-                                    type: { type: Type.STRING, enum: ["immune"] },
-                                    recommended: { type: Type.BOOLEAN },
-                                    drugs: drugSchema,
-                                    totalCycles: { type: Type.INTEGER, description: "Total number of cycles" },
-                                    frequencyDays: { type: Type.INTEGER, description: "Days per cycle" }
-                                },
-                                required: ["id", "name", "description", "type", "recommended"]
-                            }
-                        }
-                    },
-                    required: ["chemoOptions", "endocrineOptions", "targetOptions", "immuneOptions"]
-                }
-            }
-        });
+    const regimenSchema = {
+        type: "ARRAY",
+        items: {
+            type: "OBJECT",
+            properties: {
+                id: { type: "STRING" },
+                name: { type: "STRING" },
+                description: { type: "STRING" },
+                cycle: { type: "STRING" },
+                type: { type: "STRING", enum: ["chemo", "endocrine", "target", "immune"] },
+                recommended: { type: "BOOLEAN" },
+                drugs: drugSchema,
+                totalCycles: { type: "INTEGER" },
+                frequencyDays: { type: "INTEGER" }
+            },
+            required: ["id", "name", "description", "type", "recommended"]
+        }
+    };
 
-        const jsonText = response.text;
-        if (!jsonText) throw new Error("AI 返回内容为空");
-        
-        return JSON.parse(jsonText) as DetailedRegimenPlan;
+    const schema = {
+        type: "OBJECT",
+        properties: {
+            chemoOptions: regimenSchema,
+            endocrineOptions: regimenSchema,
+            targetOptions: regimenSchema,
+            immuneOptions: regimenSchema
+        },
+        required: ["chemoOptions", "endocrineOptions", "targetOptions", "immuneOptions"]
+    };
 
-    } catch (error: any) {
-        console.error("Gemini API Error (Detailed Regimens):", error);
-        throw new Error(error.message || "生成详细方案失败");
-    }
+    return await callGeminiApi(prompt, schema) as DetailedRegimenPlan;
 };

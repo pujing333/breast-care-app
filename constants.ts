@@ -1,8 +1,8 @@
 
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
-// 关键修改：使用精确版本号 -001，这通常比 generic alias 更稳定，解决 404 问题
-export const AI_MODEL_NAME = 'gemini-1.5-flash-001';
+// 关键修改：回退到 'gemini-1.5-flash' (去掉 -001)，这是目前最通用的别名
+export const AI_MODEL_NAME = 'gemini-1.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
   '恶心呕吐 (CINV)': {

@@ -1,7 +1,8 @@
 
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
-export const AI_MODEL_NAME = 'gemini-2.5-flash';
+// 关键修改：使用更稳定的 1.5 版本，解决 403 权限不足问题
+export const AI_MODEL_NAME = 'gemini-1.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
   '恶心呕吐 (CINV)': {

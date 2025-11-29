@@ -1,22 +1,22 @@
+
 import { ClinicalMarkers, Patient, TreatmentOption, DetailedRegimenPlan } from '../types';
 import { AI_MODEL_NAME } from '../constants';
 
 // 获取 API Key
 const getApiKey = () => {
     // Vite 标准环境变量读取方式
-    // 它会自动读取 Vercel 中设置的 VITE_API_KEY
     // @ts-ignore
     const apiKey = import.meta.env.VITE_API_KEY;
 
-    // 调试日志：在浏览器控制台 (F12) 可以看到 Key 是否读取成功
+    // 调试日志
     if (apiKey) {
         console.log(`[GeminiService] API Key Status: Loaded (${apiKey.substring(0, 4)}****)`);
     } else {
-        console.error("[GeminiService] API Key Status: MISSING (Undefined)");
+        console.error("[GeminiService] API Key Status: MISSING");
     }
     
     if (!apiKey) {
-        throw new Error("API Key 未配置。请确保 Vercel 环境变量名为 'VITE_API_KEY' (必须大写且带前缀)，并已重新部署。");
+        throw new Error("API Key 未配置。请确保 Vercel 环境变量名为 'VITE_API_KEY'，并已重新部署。");
     }
     return apiKey;
 };
@@ -53,12 +53,26 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
         });
 
         if (!response.ok) {
-            let errorMsg = `API 请求失败: ${response.status} ${response.statusText}`;
-            if (response.status === 404) {
+            // 尝试读取 Google 返回的详细错误信息
+            let errorDetails = "";
+            try {
+                const jsonErr = await response.json();
+                if (jsonErr && jsonErr.error && jsonErr.error.message) {
+                    errorDetails = jsonErr.error.message;
+                }
+            } catch (e) { /* ignore parse error */ }
+
+            let errorMsg = `API 请求失败 (${response.status})`;
+            
+            if (errorDetails) {
+                // 如果 Google 返回了具体原因，直接显示
+                errorMsg += `: ${errorDetails}`;
+            } else if (response.status === 404) {
                 errorMsg = "网络路径错误 (404)。Vercel 代理未生效，请检查 vercel.json。";
             } else if (response.status === 403) {
-                errorMsg = "权限拒绝 (403)。Key 无效或 Google Cloud 权限未开通。";
+                errorMsg = "权限拒绝 (403)。请检查 Key 是否正确，或是否在 Google Cloud 设置了 IP 限制。";
             }
+            
             throw new Error(errorMsg);
         }
 

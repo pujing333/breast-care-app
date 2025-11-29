@@ -5,18 +5,20 @@ import { AI_MODEL_NAME } from '../constants';
 // 获取 API Key
 const getApiKey = () => {
     // Vite 标准环境变量读取方式
+    // 这里会自动读取您在 Vercel 后台设置的 VITE_API_KEY
     // @ts-ignore
     const apiKey = import.meta.env.VITE_API_KEY;
 
-    // 调试日志
+    // 调试日志：在浏览器控制台 (F12) 可以看到 Key 是否读取成功
     if (apiKey) {
         console.log(`[GeminiService] API Key Status: Loaded (${apiKey.substring(0, 4)}****)`);
     } else {
-        console.error("[GeminiService] API Key Status: MISSING");
+        console.error("[GeminiService] API Key Status: MISSING (Undefined)");
+        console.error("请检查 Vercel 后台 Environment Variables，确保变量名为 VITE_API_KEY (全大写，带前缀)");
     }
     
     if (!apiKey) {
-        throw new Error("API Key 未配置。请确保 Vercel 环境变量名为 'VITE_API_KEY'，并已重新部署。");
+        throw new Error("API Key 未配置。请在 Vercel 后台添加 'VITE_API_KEY' 变量，并重新部署 (Redeploy)。");
     }
     return apiKey;
 };
@@ -24,7 +26,8 @@ const getApiKey = () => {
 // 核心通用请求函数
 const callGeminiApi = async (prompt: string, schema?: any) => {
     const apiKey = getApiKey();
-    // 强制使用相对路径 /google-api，通过 Vercel 转发
+    // 强制使用相对路径 /google-api，通过 Vercel 转发到 Google
+    // 这一步是国内手机能用的关键
     const baseUrl = '/google-api/v1beta/models';
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent`;
 
@@ -47,30 +50,32 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-goog-api-key': apiKey // Header 传递 Key
+                'x-goog-api-key': apiKey // 使用 Header 传递 Key，比 URL 参数更安全稳定
             },
             body: JSON.stringify(body)
         });
 
         if (!response.ok) {
-            // 尝试读取 Google 返回的详细错误信息
-            let errorDetails = "";
+            let errorMsg = `API 请求失败: ${response.status} ${response.statusText}`;
+            
+            // 尝试解析详细错误
             try {
                 const jsonErr = await response.json();
-                if (jsonErr && jsonErr.error && jsonErr.error.message) {
-                    errorDetails = jsonErr.error.message;
+                if (jsonErr.error && jsonErr.error.message) {
+                    errorMsg += ` - ${jsonErr.error.message}`;
                 }
-            } catch (e) { /* ignore parse error */ }
+            } catch (e) {}
 
-            let errorMsg = `API 请求失败 (${response.status})`;
-            
-            if (errorDetails) {
-                // 如果 Google 返回了具体原因，直接显示
-                errorMsg += `: ${errorDetails}`;
-            } else if (response.status === 404) {
-                errorMsg = "网络路径错误 (404)。Vercel 代理未生效，请检查 vercel.json。";
+            if (response.status === 404) {
+                // 如果返回 HTML 类型的 404，说明 vercel.json 没生效
+                const contentType = response.headers.get("content-type");
+                if (contentType && contentType.includes("text/html")) {
+                    errorMsg = "网络配置错误 (404)。Vercel 代理通道丢失，请检查 GitHub 根目录是否有 vercel.json 文件。";
+                } else {
+                    errorMsg = `模型未找到 (404)。当前使用模型: ${AI_MODEL_NAME}`;
+                }
             } else if (response.status === 403) {
-                errorMsg = "权限拒绝 (403)。请检查 Key 是否正确，或是否在 Google Cloud 设置了 IP 限制。";
+                errorMsg = "权限拒绝 (403)。请检查 Key 是否有效，或是否在 Google AI Studio 设置了 IP 限制 (请设为 None)。";
             }
             
             throw new Error(errorMsg);

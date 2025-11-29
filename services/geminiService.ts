@@ -5,20 +5,23 @@ import { AI_MODEL_NAME } from '../constants';
 // 获取 API Key
 const getApiKey = () => {
     // Vite 标准环境变量读取方式
-    // 这里会自动读取您在 Vercel 后台设置的 VITE_API_KEY
     // @ts-ignore
-    const apiKey = import.meta.env.VITE_API_KEY;
+    let apiKey = import.meta.env.VITE_API_KEY;
 
-    // 调试日志：在浏览器控制台 (F12) 可以看到 Key 是否读取成功
+    // 自动去除空格容错
     if (apiKey) {
-        console.log(`[GeminiService] API Key Status: Loaded (${apiKey.substring(0, 4)}****)`);
+        apiKey = apiKey.trim();
+    }
+
+    // 调试日志
+    if (apiKey) {
+        console.log(`[GeminiService] API Key Loaded: ${apiKey.substring(0, 4)}****`);
     } else {
-        console.error("[GeminiService] API Key Status: MISSING (Undefined)");
-        console.error("请检查 Vercel 后台 Environment Variables，确保变量名为 VITE_API_KEY (全大写，带前缀)");
+        console.error("[GeminiService] API Key MISSING");
     }
     
     if (!apiKey) {
-        throw new Error("API Key 未配置。请在 Vercel 后台添加 'VITE_API_KEY' 变量，并重新部署 (Redeploy)。");
+        throw new Error("API Key 未配置。请在 Vercel 后台检查环境变量 VITE_API_KEY。");
     }
     return apiKey;
 };
@@ -26,10 +29,11 @@ const getApiKey = () => {
 // 核心通用请求函数
 const callGeminiApi = async (prompt: string, schema?: any) => {
     const apiKey = getApiKey();
-    // 强制使用相对路径 /google-api，通过 Vercel 转发到 Google
-    // 这一步是国内手机能用的关键
+    // 强制使用相对路径 /google-api，通过 Vercel 转发
     const baseUrl = '/google-api/v1beta/models';
-    const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent`;
+    
+    // 【关键修改】将 Key 放在 URL 参数中，确保穿透代理
+    const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
     const body: any = {
         contents: [{
@@ -49,36 +53,42 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
         const response = await fetch(url, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': apiKey // 使用 Header 传递 Key，比 URL 参数更安全稳定
+                'Content-Type': 'application/json'
+                // 注意：这里不再发送 x-goog-api-key header，防止与 URL 参数冲突
             },
             body: JSON.stringify(body)
         });
 
         if (!response.ok) {
-            let errorMsg = `API 请求失败: ${response.status} ${response.statusText}`;
-            
-            // 尝试解析详细错误
+            const contentType = response.headers.get("content-type");
+            let errorDetails = "";
+
+            // 尝试解析 Google 的详细错误信息
             try {
                 const jsonErr = await response.json();
                 if (jsonErr.error && jsonErr.error.message) {
-                    errorMsg += ` - ${jsonErr.error.message}`;
+                    errorDetails = jsonErr.error.message;
                 }
             } catch (e) {}
 
             if (response.status === 404) {
-                // 如果返回 HTML 类型的 404，说明 vercel.json 没生效
-                const contentType = response.headers.get("content-type");
                 if (contentType && contentType.includes("text/html")) {
-                    errorMsg = "网络配置错误 (404)。Vercel 代理通道丢失，请检查 GitHub 根目录是否有 vercel.json 文件。";
+                    throw new Error("网络配置错误 (404): Vercel 代理通道丢失。请检查 GitHub 根目录 vercel.json 是否上传成功。");
                 } else {
-                    errorMsg = `模型未找到 (404)。当前使用模型: ${AI_MODEL_NAME}`;
+                    // JSON 404
+                    throw new Error(`模型未找到 (404)。正在请求模型: ${AI_MODEL_NAME}。可能是模型名称变更或 Key 权限不足。Google返回: ${errorDetails}`);
                 }
-            } else if (response.status === 403) {
-                errorMsg = "权限拒绝 (403)。请检查 Key 是否有效，或是否在 Google AI Studio 设置了 IP 限制 (请设为 None)。";
             }
             
-            throw new Error(errorMsg);
+            if (response.status === 403) {
+                 throw new Error(`权限拒绝 (403): ${errorDetails || 'Key 无效或受限'}。请检查 Vercel 后台 VITE_API_KEY 是否正确。`);
+            }
+            
+            if (response.status === 400) {
+                 throw new Error(`请求无效 (400): ${errorDetails}。可能是 API Key 格式错误或参数有误。`);
+            }
+
+            throw new Error(`API 请求失败 (${response.status}): ${errorDetails || response.statusText}`);
         }
 
         const data = await response.json();

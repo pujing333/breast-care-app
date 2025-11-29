@@ -54,7 +54,7 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
-                // 注意：这里不再发送 x-goog-api-key header，防止与 URL 参数冲突
+                // 注意：这里不再发送 x-goog-api-key header，防止冲突
             },
             body: JSON.stringify(body)
         });

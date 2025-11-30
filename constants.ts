@@ -1,7 +1,7 @@
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
 // 使用最通用的 Flash 版本
-export const AI_MODEL_NAME = 'gemini-1.5-flash-001';
+export const AI_MODEL_NAME = 'gemini-1.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
 '恶心呕吐 (CINV)': {

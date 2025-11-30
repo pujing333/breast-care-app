@@ -1,8 +1,8 @@
 
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
-// 关键修改：回退到 'gemini-1.5-flash' (去掉 -001)，这是目前最通用的别名
-export const AI_MODEL_NAME = 'gemini-1.5-flash';
+// 关键修改：使用具体的稳定版版本号 -002，解决 404 错误
+export const AI_MODEL_NAME = 'gemini-1.5-flash-002';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
   '恶心呕吐 (CINV)': {
@@ -177,7 +177,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     markers: {
       erStatus: '待查',
       prStatus: '待查',
-      her2Status: '待查',
+      her2Status: '待查',a
       ki67: '待查',
       tumorSize: '1.2cm',
       nodeStatus: 'N0',

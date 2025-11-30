@@ -1,7 +1,7 @@
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
 // 关键修改：回退到最经典、兼容性最强的 gemini-pro，解决 404 问题
-export const AI_MODEL_NAME = 'gemini-pro';
+export const AI_MODEL_NAME = 'gemini-1.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
 '恶心呕吐 (CINV)': {

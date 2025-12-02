@@ -33,14 +33,14 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string) => {
     const apiKey = getApiKey();
     
-    // 【关键修改 1】使用 v1 正式版接口，最稳定
+    // 使用 v1 正式版接口，最稳定
     const baseUrl = '/google-api/v1/models';
     
     // URL 参数传递 Key，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
-    // 【关键修改 2】移除 responseSchema 和 responseMimeType。
-    // 彻底解决 400 错误 (Invalid JSON payload / Unknown name)。
+    // 【关键修改】移除 responseMimeType 和 responseSchema。
+    // 彻底解决 400 "Unknown name 'responseMimeType'" 错误。
     // 我们完全依赖 Prompt 来引导 JSON 输出。
     const body: any = {
         contents: [{
@@ -48,13 +48,11 @@ const callGeminiApi = async (prompt: string) => {
         }],
         generationConfig: {
             temperature: 0.4
-            // 移除 responseMimeType，防止旧版网关报错
+            // 移除所有可能导致 400 的高级参数，回归最纯粹的文本生成
         }
     };
 
     try {
-        console.log(`[GeminiService] Sending request to: ${url}`);
-
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -63,7 +61,6 @@ const callGeminiApi = async (prompt: string) => {
             body: JSON.stringify(body)
         });
 
-        // 获取响应文本
         const responseText = await response.text();
         let jsonErr: any = null;
         try {
@@ -95,7 +92,7 @@ const callGeminiApi = async (prompt: string) => {
             }
             
             if (response.status === 400) {
-                throw new Error(`请求格式错误 (400): ${errorDetails}。已自动切换至兼容模式，请重试。`);
+                throw new Error(`请求参数错误 (400): ${errorDetails}。已移除所有不兼容参数，请检查 Prompt 格式。`);
             }
 
             throw new Error(`API 请求失败 (${response.status}): ${errorDetails}`);

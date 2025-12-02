@@ -25,23 +25,20 @@ const getApiKey = () => {
     }
 
     // 调试日志
-    if (apiKey) {
-        console.log(`[GeminiService] API Key Loaded: ${apiKey.substring(0, 4)}****`);
-    } else {
-        console.error("[GeminiService] API Key MISSING");
-    }
-    
-    if (!apiKey) {
-        throw new Error("API Key 未配置。请在 Vercel 环境变量中添加 API_KEY 或 VITE_API_KEY，并重新部署 (Redeploy)。");
-    }
-    return apiKey;
+   if (apiKey) {
+    apiKey = apiKey.trim();
+    console.log(`[GeminiService] API Key Loaded: ${apiKey.substring(0, 4)}****`);
+} else {
+    console.error("[GeminiService] API Key MISSING");
+    throw new Error("API Key 未配置。请在 Vercel 环境变量中添加 API_KEY 或 VITE_API_KEY，并重新部署 (Redeploy)。");
+}
+return apiKey;
 };
-
 // 核心通用请求函数
 const callGeminiApi = async (prompt: string, schema?: any) => {
     const apiKey = getApiKey();
     // 强制使用相对路径 /google-api，通过 Vercel 转发
-    const baseUrl = '/google-api/v1/models';
+    const baseUrl = '/google-api/v1beta/models';
     
     // 将 Key 放在 URL 参数中，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;

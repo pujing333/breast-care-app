@@ -4,9 +4,20 @@ import { AI_MODEL_NAME } from '../constants';
 
 // 获取 API Key
 const getApiKey = () => {
-    // Vite 标准环境变量读取方式
+    let apiKey = '';
+
+    // 1. 优先尝试从 vite.config.ts 注入的全局变量中读取 (最稳健)
     // @ts-ignore
-    let apiKey = import.meta.env.VITE_API_KEY;
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+        // @ts-ignore
+        apiKey = process.env.API_KEY;
+    } 
+    
+    // 2. 后备尝试：读取标准的 Vite 环境变量
+    if (!apiKey) {
+        // @ts-ignore
+        apiKey = import.meta.env.VITE_API_KEY;
+    }
 
     // 自动去除空格容错
     if (apiKey) {
@@ -21,7 +32,7 @@ const getApiKey = () => {
     }
     
     if (!apiKey) {
-        throw new Error("API Key 未配置。请在 Vercel 后台检查环境变量 VITE_API_KEY。");
+        throw new Error("API Key 未配置。请在 Vercel 环境变量中添加 API_KEY 或 VITE_API_KEY，并重新部署 (Redeploy)。");
     }
     return apiKey;
 };
@@ -30,9 +41,11 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string, schema?: any) => {
     const apiKey = getApiKey();
     // 强制使用相对路径 /google-api，通过 Vercel 转发
-    const baseUrl = '/google-api/v1/models';
+    // 使用 v1beta 接口兼容 gemini-pro，或者使用 v1 接口兼容 gemini-1.5-flash
+    // 推荐保持 v1beta 以兼容当前 constants.ts 设置
+    const baseUrl = '/google-api/v1beta/models';
     
-    // 【关键修改】将 Key 放在 URL 参数中，确保穿透代理
+    // 将 Key 放在 URL 参数中，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
     const body: any = {
@@ -82,7 +95,7 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
             
             if (response.status === 403) {
                  const googleMsg = jsonErr?.error?.message || '';
-                 throw new Error(`权限拒绝 (403): ${googleMsg || 'Key 无效'}。请检查 Vercel 后台 VITE_API_KEY。`);
+                 throw new Error(`权限拒绝 (403): ${googleMsg || 'Key 无效'}。请检查 Vercel 后台 API_KEY。`);
             }
 
             throw new Error(`API 请求失败 (${response.status}): ${response.statusText}`);

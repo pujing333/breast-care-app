@@ -41,7 +41,7 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string, schema?: any) => {
     const apiKey = getApiKey();
     // 强制使用相对路径 /google-api，通过 Vercel 转发
-    const baseUrl = '/google-api/v1beta/models';
+    const baseUrl = '/google-api/v1/models';
     
     // 将 Key 放在 URL 参数中，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;

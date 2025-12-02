@@ -1,7 +1,8 @@
+
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
-// 关键修改：更新为 gemini-3-pro-preview (Complex Text Tasks)
-export const AI_MODEL_NAME = 'gemini-3-pro-preview';
+// 关键修改：使用最稳定的 Flash 版本，确保新 Key 能立即接通，避免预览版权限问题
+export const AI_MODEL_NAME = 'gemini-1.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
   '恶心呕吐 (CINV)': {
@@ -109,7 +110,7 @@ export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
   '皮疹/过敏反应': {
     strategies: [
       '保持皮肤清洁干燥，避免抓挠。',
-      '穿着宽松衣物。',
+      '穿着棉质宽松衣物。',
       '避免阳光直射，使用防晒霜。'
     ],
     medications: [

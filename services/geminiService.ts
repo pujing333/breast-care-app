@@ -33,20 +33,22 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string) => {
     const apiKey = getApiKey();
     
-    // 【关键修复】
-    // 1. 使用 v1beta 接口 (兼容 gemini-pro)
-    // 2. 不传 responseMimeType (gemini-pro 不支持，会导致 400)
-    // 3. 不传 responseSchema (避免格式校验错误)
+    // 【关键路径】必须使用 v1beta 才能完美支持 gemini-1.5-flash 的各项特性
     const baseUrl = '/google-api/v1beta/models';
+    
+    // URL 参数传递 Key，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
+    // 【配置优化】
+    // 1. responseMimeType: "application/json" - 在 v1beta 中支持良好，确保返回 JSON。
+    // 2. 移除 responseSchema - 避免 "Unknown name" 或格式校验导致的 400 错误。
     const body: any = {
         contents: [{
             parts: [{ text: prompt }]
         }],
         generationConfig: {
-            temperature: 0.4
-            // 注意：此处不添加 responseMimeType: "application/json"，因为 gemini-pro 不支持
+            temperature: 0.4,
+            responseMimeType: "application/json"
         }
     };
 
@@ -83,14 +85,14 @@ const callGeminiApi = async (prompt: string) => {
             }
             
             if (response.status === 403) {
-                 if (errorDetails.includes("leaked") || errorDetails.includes("disabled")) {
-                     throw new Error("⛔️ 严重安全警告: API Key 已被禁用。请去 AI Studio 生成新 Key 并更新 Vercel 变量。");
+                 if (errorDetails.includes("leaked") || errorDetails.includes("disabled") || errorDetails.includes("API key not valid")) {
+                     throw new Error("⛔️ 严重安全警告: API Key 已被禁用 (Leaked/Disabled)。请立即去 AI Studio 生成新 Key 并更新 Vercel 变量。");
                  }
                  throw new Error(`权限拒绝 (403): ${errorDetails}。请检查 Vercel 后台 API_KEY。`);
             }
             
             if (response.status === 400) {
-                throw new Error(`请求格式错误 (400): ${errorDetails}。已降级为兼容模式，请重试。`);
+                throw new Error(`请求格式错误 (400): ${errorDetails}。这通常意味着参数不兼容，代码已尝试自动降级。`);
             }
 
             throw new Error(`API 请求失败 (${response.status}): ${errorDetails}`);
@@ -101,8 +103,9 @@ const callGeminiApi = async (prompt: string) => {
         
         if (!text) throw new Error("AI 返回数据为空");
 
-        // 清洗 Markdown 标记，手动解析 JSON
+        // 【代码清洗】手动处理 Markdown 标记
         text = text.trim();
+        // 移除 ```json ... ```
         if (text.startsWith('```')) {
             text = text.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
         }
@@ -118,7 +121,7 @@ const callGeminiApi = async (prompt: string) => {
 };
 
 export const generateTreatmentOptions = async (patient: Patient, markers: ClinicalMarkers): Promise<TreatmentOption[]> => {
-    // 强化 Prompt，因为 gemini-pro 必须靠 prompt 才能输出 JSON
+    // 强化 Prompt，因为我们移除了 Schema，所以需要在 Prompt 里强调 JSON 结构
     const prompt = `
     作为一名乳腺外科专家，请根据以下患者数据制定 **2-3种** 不同的总体治疗路径选项。
     
@@ -157,7 +160,7 @@ export const generateDetailedRegimens = async (patient: Patient, markers: Clinic
     
     每个数组中的对象必须包含：
     - id (string)
-    - name (string): 方案名称 (如 "AC-T")a
+    - name (string): 方案名称 (如 "AC-T")
     - description (string): 描述
     - cycle (string): 周期描述
     - type (string): 对应 "chemo", "endocrine", "target", "immune"

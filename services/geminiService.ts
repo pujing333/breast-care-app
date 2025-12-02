@@ -6,7 +6,7 @@ import { AI_MODEL_NAME } from '../constants';
 const getApiKey = () => {
     let apiKey = '';
 
-    // 1. 优先尝试从 vite.config.ts 注入的全局变量中读取 (最稳健)
+    // 1. 优先尝试从 vite.config.ts 注入的全局变量中读取
     // @ts-ignore
     if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
         // @ts-ignore
@@ -19,30 +19,28 @@ const getApiKey = () => {
         apiKey = import.meta.env.VITE_API_KEY;
     }
 
-    // 自动去除空格容错
     if (apiKey) {
         apiKey = apiKey.trim();
+        console.log(`[GeminiService] API Key Loaded: ${apiKey.substring(0, 4)}****`);
+    } else {
+        console.error("[GeminiService] API Key MISSING");
+        throw new Error("API Key 未配置。请在 Vercel 环境变量中添加 API_KEY 或 VITE_API_KEY，并重新部署 (Redeploy)。");
     }
-
-    // 调试日志
-   if (apiKey) {
-    apiKey = apiKey.trim();
-    console.log(`[GeminiService] API Key Loaded: ${apiKey.substring(0, 4)}****`);
-} else {
-    console.error("[GeminiService] API Key MISSING");
-    throw new Error("API Key 未配置。请在 Vercel 环境变量中添加 API_KEY 或 VITE_API_KEY，并重新部署 (Redeploy)。");
-}
-return apiKey;
+    return apiKey;
 };
+
 // 核心通用请求函数
-const callGeminiApi = async (prompt: string, schema?: any) => {
+const callGeminiApi = async (prompt: string) => {
     const apiKey = getApiKey();
-    // 强制使用相对路径 /google-api，通过 Vercel 转发
+    
+    // 强制使用 v1 正式版接口，最稳定
     const baseUrl = '/google-api/v1/models';
     
     // 将 Key 放在 URL 参数中，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
+    // 【关键修改】移除 responseSchema，只保留 MIME Type。
+    // 这能彻底解决因 Schema 格式校验导致的 400 Bad Request 错误。
     const body: any = {
         contents: [{
             parts: [{ text: prompt }]
@@ -52,10 +50,6 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
             responseMimeType: "application/json"
         }
     };
-
-    if (schema) {
-        body.generationConfig.responseSchema = schema;
-    }
 
     try {
         const response = await fetch(url, {
@@ -76,25 +70,32 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
         }
 
         if (!response.ok) {
+            let errorDetails = response.statusText;
+            if (jsonErr && jsonErr.error && jsonErr.error.message) {
+                errorDetails = jsonErr.error.message;
+            }
+
             if (response.status === 404) {
                 if (!jsonErr || (typeof jsonErr === 'string' && jsonErr.includes('DOCTYPE'))) {
                     throw new Error("网络配置错误 (404): Vercel 代理通道丢失。请检查 GitHub 根目录 vercel.json 是否上传成功。");
                 } 
                 else {
-                    const googleMsg = jsonErr?.error?.message || '未知原因';
-                    throw new Error(`Google 模型错误 (404): 找不到模型 '${AI_MODEL_NAME}'。详细信息: ${googleMsg}`);
+                    throw new Error(`Google 模型错误 (404): 找不到模型 '${AI_MODEL_NAME}'。详细信息: ${errorDetails}`);
                 }
             }
             
             if (response.status === 403) {
-                 const googleMsg = jsonErr?.error?.message || '';
-                 if (googleMsg.includes("leaked")) {
-                     throw new Error("⛔️ 严重安全警告: 您的 API Key 已被 Google 标记为泄露并禁用。请立即去 AI Studio 生成新的 Key，并在 Vercel 环境变量中更新。");
+                 if (errorDetails.includes("leaked") || errorDetails.includes("disabled")) {
+                     throw new Error("⛔️ 严重安全警告: API Key 已被禁用。请去 AI Studio 生成新 Key 并更新 Vercel 变量。");
                  }
-                 throw new Error(`权限拒绝 (403): ${googleMsg || 'Key 无效'}。请检查 Vercel 后台 API_KEY。`);
+                 throw new Error(`权限拒绝 (403): ${errorDetails}。请检查 Vercel 后台 API_KEY。`);
+            }
+            
+            if (response.status === 400) {
+                throw new Error(`请求格式错误 (400): ${errorDetails}。已切换至无 Schema 兼容模式，请重试。`);
             }
 
-            throw new Error(`API 请求失败 (${response.status}): ${response.statusText}`);
+            throw new Error(`API 请求失败 (${response.status}): ${errorDetails}`);
         }
 
         const data = await response.json();
@@ -109,87 +110,54 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
 };
 
 export const generateTreatmentOptions = async (patient: Patient, markers: ClinicalMarkers): Promise<TreatmentOption[]> => {
+    // 强化 Prompt，因为我们移除了 Schema，所以需要在 Prompt 里强调 JSON 结构
     const prompt = `
-    作为乳腺外科专家，制定2-3种总体治疗路径。
-    患者: ${patient.age}岁, ${patient.diagnosis}, 分子分型:${patient.subtype}
-    病理: ER:${markers.erStatus}, PR:${markers.prStatus}, HER2:${markers.her2Status}, Ki67:${markers.ki67}, T:${markers.tumorSize}, N:${markers.nodeStatus}, 绝经:${markers.menopause ? '是' : '否'}
+    作为一名乳腺外科专家，请根据以下患者数据制定 **2-3种** 不同的总体治疗路径选项。
     
-    返回JSON数组，每个包含: id, title, iconType(surgery/chemo/drug/observation), description, duration, pros[], cons[], recommended(boolean).
-    依据NCCN/CSCO指南标记最推荐方案。
+    患者信息：
+    - 年龄: ${patient.age}岁, 绝经: ${markers.menopause ? '是' : '否'}
+    - 诊断: ${patient.diagnosis}
+    - 病理: ER:${markers.erStatus}, PR:${markers.prStatus}, HER2:${markers.her2Status}, Ki67:${markers.ki67}, T:${markers.tumorSize}, N:${markers.nodeStatus}
+    
+    请严格返回一个 **JSON数组** (Array of Objects)。
+    数组中每个对象必须包含以下字段：
+    - id (string): 唯一ID，如 "plan_1"
+    - title (string): 方案标题
+    - iconType (string): 只能是 "surgery", "chemo", "drug", 或 "observation" 之一
+    - description (string): 详细临床描述
+    - duration (string): 预估时长
+    - pros (string数组): 优点列表
+    - cons (string数组): 缺点列表
+    - recommended (boolean): 是否为指南推荐的最佳方案（仅一个为true）
     `;
 
-    const schema = {
-        type: "ARRAY",
-        items: {
-            type: "OBJECT",
-            properties: {
-                id: { type: "STRING" },
-                title: { type: "STRING" },
-                iconType: { type: "STRING", enum: ["surgery", "chemo", "drug", "observation"] },
-                description: { type: "STRING" },
-                duration: { type: "STRING" },
-                pros: { type: "ARRAY", items: { type: "STRING" } },
-                cons: { type: "ARRAY", items: { type: "STRING" } },
-                recommended: { type: "BOOLEAN" }
-            },
-            required: ["id", "title", "iconType", "description", "recommended"]
-        }
-    };
-
-    return await callGeminiApi(prompt, schema) as TreatmentOption[];
+    return await callGeminiApi(prompt) as TreatmentOption[];
 };
 
 export const generateDetailedRegimens = async (patient: Patient, markers: ClinicalMarkers, highLevelPlan: TreatmentOption): Promise<DetailedRegimenPlan | null> => {
     const prompt = `
-    基于路径 "${highLevelPlan.title}"，提供详细药物方案。
-    患者: ${patient.age}岁, 分型:${patient.subtype}
-    返回JSON对象包含: chemoOptions, endocrineOptions, targetOptions, immuneOptions.
-    每项需包含: drugs(name, standardDose, unit), totalCycles, frequencyDays.
-    单位使用: mg/m2, mg/kg, 或 mg.
+    基于已选定的总体治疗路径："${highLevelPlan.title}" (${highLevelPlan.description})，
+    请为该乳腺癌患者提供具体的药物/治疗方案选项。
+    
+    患者数据：
+    - 年龄: ${patient.age}, 绝经: ${markers.menopause ? '是' : '否'}
+    - 分型: ${patient.subtype}
+    - 病理: ER:${markers.erStatus}, HER2:${markers.her2Status}, T:${markers.tumorSize}, N:${markers.nodeStatus}
+    
+    请严格返回一个 **JSON对象**。
+    对象需包含以下四个数组字段：chemoOptions, endocrineOptions, targetOptions, immuneOptions。
+    
+    每个数组中的对象必须包含：
+    - id (string)
+    - name (string): 方案名称 (如 "AC-T")
+    - description (string): 描述
+    - cycle (string): 周期描述
+    - type (string): 对应 "chemo", "endocrine", "target", "immune"
+    - recommended (boolean)
+    - totalCycles (number): 总周期数 (数字)
+    - frequencyDays (number): 单周期天数 (数字)
+    - drugs (数组): 包含 name(药名), standardDose(数值), unit(单位: mg/m2, mg/kg, mg)
     `;
 
-    const drugSchema = {
-        type: "ARRAY",
-        items: {
-            type: "OBJECT",
-            properties: {
-                name: { type: "STRING" },
-                standardDose: { type: "NUMBER" },
-                unit: { type: "STRING" }
-            },
-            required: ["name", "standardDose", "unit"]
-        }
-    };
-
-    const regimenSchema = {
-        type: "ARRAY",
-        items: {
-            type: "OBJECT",
-            properties: {
-                id: { type: "STRING" },
-                name: { type: "STRING" },
-                description: { type: "STRING" },
-                cycle: { type: "STRING" },
-                type: { type: "STRING" },
-                recommended: { type: "BOOLEAN" },
-                drugs: drugSchema,
-                totalCycles: { type: "INTEGER" },
-                frequencyDays: { type: "INTEGER" }
-            },
-            required: ["id", "name", "description", "type", "recommended"]
-        }
-    };
-
-    const schema = {
-        type: "OBJECT",
-        properties: {
-            chemoOptions: regimenSchema,
-            endocrineOptions: regimenSchema,
-            targetOptions: regimenSchema,
-            immuneOptions: regimenSchema
-        },
-        required: ["chemoOptions", "endocrineOptions", "targetOptions", "immuneOptions"]
-    };
-
-    return await callGeminiApi(prompt, schema) as DetailedRegimenPlan;
+    return await callGeminiApi(prompt) as DetailedRegimenPlan;
 };

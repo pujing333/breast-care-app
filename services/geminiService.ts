@@ -33,27 +33,28 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string) => {
     const apiKey = getApiKey();
     
-    // 【关键修改 1】使用 v1 正式版接口，最稳定，减少 404 错误
+    // 【关键修改 1】使用 v1 正式版接口，最稳定
     const baseUrl = '/google-api/v1/models';
     
     // URL 参数传递 Key，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
-    // 【关键修改 2】移除 responseSchema，只保留 MIME Type。
-    // 这能彻底解决因 Schema 格式校验导致的 400 Bad Request 错误。
+    // 【关键修改 2】移除 responseSchema 和 responseMimeType。
+    // 彻底解决 400 错误 (Invalid JSON payload / Unknown name)。
+    // 我们完全依赖 Prompt 来引导 JSON 输出。
     const body: any = {
         contents: [{
             parts: [{ text: prompt }]
         }],
         generationConfig: {
-            temperature: 0.4,
-            responseMimeType: "application/json"
+            temperature: 0.4
+            // 移除 responseMimeType，防止旧版网关报错
         }
     };
 
     try {
         console.log(`[GeminiService] Sending request to: ${url}`);
-        
+
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -77,8 +78,6 @@ const callGeminiApi = async (prompt: string) => {
                 errorDetails = jsonErr.error.message;
             }
 
-            console.error(`[GeminiService] Error ${response.status}:`, errorDetails);
-
             if (response.status === 404) {
                 if (!jsonErr || (typeof jsonErr === 'string' && jsonErr.includes('DOCTYPE'))) {
                     throw new Error("网络配置错误 (404): Vercel 代理通道丢失。请检查 GitHub 根目录 vercel.json 是否上传成功。");
@@ -96,7 +95,7 @@ const callGeminiApi = async (prompt: string) => {
             }
             
             if (response.status === 400) {
-                throw new Error(`请求格式错误 (400): ${errorDetails}。已切换至无 Schema 兼容模式，请重试。`);
+                throw new Error(`请求格式错误 (400): ${errorDetails}。已自动切换至兼容模式，请重试。`);
             }
 
             throw new Error(`API 请求失败 (${response.status}): ${errorDetails}`);
@@ -107,18 +106,24 @@ const callGeminiApi = async (prompt: string) => {
         
         if (!text) throw new Error("AI 返回数据为空");
 
-        // 【新增清洗逻辑】因为 AI 可能会返回 Markdown 代码块 (```json ... ```)
-        // 我们手动去除这些标记，确保 JSON.parse 能成功
+        // 【新增清洗逻辑】因为移除了 JSON Mode，AI 可能会返回 Markdown 代码块
+        // 我们手动去除 ```json 和 ``` 标记，确保 JSON.parse 能成功
         text = text.trim();
+        // 移除开头的 markdown 标记 (```json 或 ```)
         if (text.startsWith('```')) {
-            text = text.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+            text = text.replace(/^```(json)?/i, '').trim();
+        }
+        // 移除结尾的 markdown 标记 (```)
+        if (text.endsWith('```')) {
+            text = text.replace(/```$/, '').trim();
         }
 
         return JSON.parse(text);
     } catch (error: any) {
         console.error("Gemini Error:", error);
+        // 如果 JSON 解析失败，抛出更友好的错误
         if (error instanceof SyntaxError) {
-            throw new Error("AI 返回的数据格式有误，请重试。");
+            throw new Error("AI 返回的数据不是有效的 JSON 格式，请重试。");
         }
         throw error;
     }
@@ -134,7 +139,7 @@ export const generateTreatmentOptions = async (patient: Patient, markers: Clinic
     - 诊断: ${patient.diagnosis}
     - 病理: ER:${markers.erStatus}, PR:${markers.prStatus}, HER2:${markers.her2Status}, Ki67:${markers.ki67}, T:${markers.tumorSize}, N:${markers.nodeStatus}
     
-    请严格返回一个 **JSON数组** (Array of Objects)，不要包含任何Markdown标记。
+    请严格返回一个 **纯JSON数组** (Array of Objects)，不要包含任何Markdown标记或其他文字。
     数组中每个对象必须包含以下字段：
     - id (string): 唯一ID，如 "plan_1"
     - title (string): 方案标题
@@ -159,7 +164,7 @@ export const generateDetailedRegimens = async (patient: Patient, markers: Clinic
     - 分型: ${patient.subtype}
     - 病理: ER:${markers.erStatus}, HER2:${markers.her2Status}, T:${markers.tumorSize}, N:${markers.nodeStatus}
     
-    请严格返回一个 **JSON对象**，不要包含任何Markdown标记。
+    请严格返回一个 **纯JSON对象**，不要包含任何Markdown标记或其他文字。
     对象需包含以下四个数组字段：chemoOptions, endocrineOptions, targetOptions, immuneOptions。
     
     每个数组中的对象必须包含：

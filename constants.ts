@@ -1,8 +1,9 @@
 
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
-// 关键修改：回退到 gemini-pro。这是最稳定的模型，虽然是上一代，但兼容性最好，不容易报 404/400。
-export const AI_MODEL_NAME = 'gemini-2.5-flash';
+// 关键修改：使用 gemini-1.5-flash。这是目前最稳定、速度最快且免费额度较高的模型。
+// 配合 v1beta 接口使用效果最佳。
+export const AI_MODEL_NAME = 'gemini-1.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
   '恶心呕吐 (CINV)': {

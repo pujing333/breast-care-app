@@ -33,23 +33,20 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string) => {
     const apiKey = getApiKey();
     
-    // 【核心修复】回退到 v1beta 接口
-    // 原因：Google 返回 404 表示 v1 接口中没有 gemini-1.5-flash 模型，必须用 v1beta。
+    // 【关键修复】
+    // 1. 使用 v1beta 接口 (兼容 gemini-pro)
+    // 2. 不传 responseMimeType (gemini-pro 不支持，会导致 400)
+    // 3. 不传 responseSchema (避免格式校验错误)
     const baseUrl = '/google-api/v1beta/models';
-    
-    // URL 参数传递 Key，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
-    // 【配置策略】v1beta + responseMimeType
-    // v1beta 接口完美支持 responseMimeType: "application/json"，可以保证输出 JSON。
-    // 我们不传 responseSchema，以免触发 400 格式校验错误。
     const body: any = {
         contents: [{
             parts: [{ text: prompt }]
         }],
         generationConfig: {
-            temperature: 0.4,
-            responseMimeType: "application/json"
+            temperature: 0.4
+            // 注意：此处不添加 responseMimeType: "application/json"，因为 gemini-pro 不支持
         }
     };
 
@@ -93,7 +90,7 @@ const callGeminiApi = async (prompt: string) => {
             }
             
             if (response.status === 400) {
-                throw new Error(`请求格式错误 (400): ${errorDetails}。`);
+                throw new Error(`请求格式错误 (400): ${errorDetails}。已降级为兼容模式，请重试。`);
             }
 
             throw new Error(`API 请求失败 (${response.status}): ${errorDetails}`);
@@ -104,7 +101,7 @@ const callGeminiApi = async (prompt: string) => {
         
         if (!text) throw new Error("AI 返回数据为空");
 
-        // 清洗 Markdown 标记 (兼容性处理)
+        // 清洗 Markdown 标记，手动解析 JSON
         text = text.trim();
         if (text.startsWith('```')) {
             text = text.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
@@ -121,6 +118,7 @@ const callGeminiApi = async (prompt: string) => {
 };
 
 export const generateTreatmentOptions = async (patient: Patient, markers: ClinicalMarkers): Promise<TreatmentOption[]> => {
+    // 强化 Prompt，因为 gemini-pro 必须靠 prompt 才能输出 JSON
     const prompt = `
     作为一名乳腺外科专家，请根据以下患者数据制定 **2-3种** 不同的总体治疗路径选项。
     
@@ -159,7 +157,7 @@ export const generateDetailedRegimens = async (patient: Patient, markers: Clinic
     
     每个数组中的对象必须包含：
     - id (string)
-    - name (string): 方案名称 (如 "AC-T")
+    - name (string): 方案名称 (如 "AC-T")a
     - description (string): 描述
     - cycle (string): 周期描述
     - type (string): 对应 "chemo", "endocrine", "target", "immune"

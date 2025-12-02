@@ -41,8 +41,6 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string, schema?: any) => {
     const apiKey = getApiKey();
     // 强制使用相对路径 /google-api，通过 Vercel 转发
-    // 使用 v1beta 接口兼容 gemini-pro，或者使用 v1 接口兼容 gemini-1.5-flash
-    // 推荐保持 v1beta 以兼容当前 constants.ts 设置
     const baseUrl = '/google-api/v1beta/models';
     
     // 将 Key 放在 URL 参数中，确保穿透代理
@@ -82,11 +80,9 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
 
         if (!response.ok) {
             if (response.status === 404) {
-                // 如果是 HTML 404，说明 Vercel 代理配置（vercel.json）没生效
                 if (!jsonErr || (typeof jsonErr === 'string' && jsonErr.includes('DOCTYPE'))) {
                     throw new Error("网络配置错误 (404): Vercel 代理通道丢失。请检查 GitHub 根目录 vercel.json 是否上传成功。");
                 } 
-                // 如果是 JSON 404，说明 Google 真的找不到模型
                 else {
                     const googleMsg = jsonErr?.error?.message || '未知原因';
                     throw new Error(`Google 模型错误 (404): 找不到模型 '${AI_MODEL_NAME}'。详细信息: ${googleMsg}`);
@@ -95,6 +91,9 @@ const callGeminiApi = async (prompt: string, schema?: any) => {
             
             if (response.status === 403) {
                  const googleMsg = jsonErr?.error?.message || '';
+                 if (googleMsg.includes("leaked")) {
+                     throw new Error("⛔️ 严重安全警告: 您的 API Key 已被 Google 标记为泄露并禁用。请立即去 AI Studio 生成新的 Key，并在 Vercel 环境变量中更新。");
+                 }
                  throw new Error(`权限拒绝 (403): ${googleMsg || 'Key 无效'}。请检查 Vercel 后台 API_KEY。`);
             }
 

@@ -1,8 +1,7 @@
 
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
-// 保持 gemini-1.5-flash，配合 v1beta 接口
-export const AI_MODEL_NAME = 'gemini-1.5-flash';
+export const AI_MODEL_NAME = 'gemini-2.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {
   '恶心呕吐 (CINV)': {

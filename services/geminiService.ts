@@ -21,7 +21,7 @@ const getApiKey = () => {
     } catch (e) {}
 
     // 最后的后备（如果环境变量未生效，仅供测试）
-    if (!apiKey || apiKey === 'YOUR_API_KEY_HERE') {
+    if (!apiKey || apiKey === 'AIzaSyBJ9HZ0JwW-pcci-AmdOAfYDx9WWI8lbxw') {
         apiKey = ''; 
     }
     

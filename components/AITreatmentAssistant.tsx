@@ -14,6 +14,7 @@ interface AITreatmentAssistantProps {
   onBatchAddEvents?: (events: Omit<TreatmentEvent, 'id'>[]) => void;
 }
 
+// FIX: Component defined outside to prevent re-mounting on every render
 const InputField = ({ 
     label, 
     value, 
@@ -50,15 +51,20 @@ export const AITreatmentAssistant: React.FC<AITreatmentAssistantProps> = ({
   const [localMarkers, setLocalMarkers] = useState<ClinicalMarkers>(patient.markers);
   const [error, setError] = useState<string | null>(null);
   
+  // Step 1 State
   const [selectedPlanId, setSelectedPlanId] = useState<string | undefined>(patient.selectedPlanId);
   const [options, setOptions] = useState<TreatmentOption[]>(patient.treatmentOptions || []);
+
+  // Step 2 State
   const [detailedPlan, setDetailedPlan] = useState<DetailedRegimenPlan | undefined>(patient.detailedPlan);
   const [selectedRegimens, setSelectedRegimens] = useState<SelectedRegimens>(patient.selectedRegimens || {});
+
+  // --- Handlers ---
 
   const handleGenerateHighLevel = async () => {
     setLoading(true);
     setError(null);
-    setDetailedPlan(undefined);
+    setDetailedPlan(undefined); // Reset step 2 if step 1 changes
     try {
       onUpdateMarkers(localMarkers);
       const generatedOptions = await generateTreatmentOptions(patient, localMarkers);
@@ -73,9 +79,15 @@ export const AITreatmentAssistant: React.FC<AITreatmentAssistantProps> = ({
           setError("AI 未生成有效内容，请稍后再试。");
       }
     } catch (e: any) {
-        console.error("Treatment Gen Error:", e);
-        // 直接显示错误信息，不再做包装，以便看清是 404 还是 403
-        setError(e.message || "生成失败，请重试");
+        // 显示具体的错误信息
+        let msg = "服务连接失败";
+        if (e.message) {
+            if (e.message.includes("403")) msg = "权限不足 (403): 请检查您的 API Key 是否开通了权限。";
+            else if (e.message.includes("404")) msg = "模型未找到: 请检查 API Key 或模型名称。";
+            else if (e.message.includes("Failed to fetch")) msg = "网络连接失败: 请确保手机可以访问 Google 服务。";
+            else msg = `错误: ${e.message}`;
+        }
+        setError(msg);
     } finally {
       setLoading(false);
     }
@@ -84,6 +96,9 @@ export const AITreatmentAssistant: React.FC<AITreatmentAssistantProps> = ({
   const handleSelectPlan = (id: string) => {
     setSelectedPlanId(id);
     onSaveOptions(options, id);
+    if (detailedPlan) {
+        // Optional: reset detailed plan logic here if strict consistency is needed
+    }
   };
 
   const handleGenerateDetailed = async () => {
@@ -97,6 +112,7 @@ export const AITreatmentAssistant: React.FC<AITreatmentAssistantProps> = ({
         const plan = await generateDetailedRegimens(patient, localMarkers, selectedOpt);
         if (plan) {
             setDetailedPlan(plan);
+            // Auto-select recommended
             const initialSelection: SelectedRegimens = {};
             if (plan.chemoOptions.length > 0) initialSelection.chemoId = plan.chemoOptions.find(o => o.recommended)?.id || plan.chemoOptions[0].id;
             if (plan.endocrineOptions.length > 0) initialSelection.endocrineId = plan.endocrineOptions.find(o => o.recommended)?.id || plan.endocrineOptions[0].id;
@@ -120,6 +136,8 @@ export const AITreatmentAssistant: React.FC<AITreatmentAssistantProps> = ({
           onSaveDetailedPlan(detailedPlan, newSelection);
       }
   };
+
+  // --- UI Helpers ---
 
   const getIcon = (type: string) => {
       switch(type) {
@@ -174,6 +192,7 @@ export const AITreatmentAssistant: React.FC<AITreatmentAssistantProps> = ({
       );
   };
 
+  // Find selected options for calculator and scheduler
   const selectedChemo = detailedPlan?.chemoOptions.find(c => c.id === selectedRegimens.chemoId);
   const selectedTarget = detailedPlan?.targetOptions.find(c => c.id === selectedRegimens.targetId);
   const selectedImmune = detailedPlan?.immuneOptions.find(c => c.id === selectedRegimens.immuneId);

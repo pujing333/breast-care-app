@@ -1,18 +1,36 @@
-import { defineConfig } from 'vite'
+[import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'path'
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: true,
-    proxy: {
-      // 本地开发时的代理配置
-      '/google-api': {
-        target: 'https://generativelanguage.googleapis.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/google-api/, '')
-      }
-    }
-  }
-})
+export default defineConfig(({ mode }) => {
+// 加载环境变量
+const env = loadEnv(mode, process.cwd(), '');
+
+// 关键修复：兼容多种常见的 Key 变量名
+// 无论您在 Vercel 设置的是 API_KEY, VITE_API_KEY 还是 GEMINI_API_KEY，这里都会抓取到
+const apiKey = env.API_KEY || env.VITE_API_KEY || env.GEMINI_API_KEY || '';
+
+return {
+plugins: [react()],
+// 将抓取到的 Key 注入到全局变量 process.env.API_KEY 中
+define: {
+'process.env.API_KEY': JSON.stringify(apiKey),
+},
+resolve: {
+alias: {
+'@': path.resolve(__dirname, './'),
+'components': path.resolve(__dirname, './components')
+}
+},
+server: {
+host: true,
+proxy: {
+'/google-api': {
+target: 'https://generativelanguage.googleapis.com',
+changeOrigin: true,
+rewrite: (path) => path.replace(/^/google-api/, '')
+}
+}
+}
+}

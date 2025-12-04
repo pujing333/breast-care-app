@@ -1,8 +1,7 @@
 
 import { Patient, MolecularSubtype, TreatmentStage, SideEffectDetail } from './types';
 
-// 关键修改：使用 gemini-1.5-flash。这是目前最稳定、速度最快且免费额度较高的模型。
-// 配合 v1beta 接口使用效果最佳。
+// 保持 gemini-1.5-flash，配合 v1beta 接口
 export const AI_MODEL_NAME = 'gemini-1.5-flash';
 
 export const COMMON_SIDE_EFFECTS: Record<string, SideEffectDetail> = {

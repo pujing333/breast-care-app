@@ -33,22 +33,23 @@ const getApiKey = () => {
 const callGeminiApi = async (prompt: string) => {
     const apiKey = getApiKey();
     
-    // 【关键路径】必须使用 v1beta 才能完美支持 gemini-1.5-flash 的各项特性
+    // 【配置组合】v1beta 接口 + gemini-1.5-flash
+    // 这是目前唯一能同时解决 404 (找不到模型) 和 400 (格式错误) 的组合
     const baseUrl = '/google-api/v1beta/models';
     
     // URL 参数传递 Key，确保穿透代理
     const url = `${baseUrl}/${AI_MODEL_NAME}:generateContent?key=${apiKey}`;
 
-    // 【配置优化】
-    // 1. responseMimeType: "application/json" - 在 v1beta 中支持良好，确保返回 JSON。
-    // 2. 移除 responseSchema - 避免 "Unknown name" 或格式校验导致的 400 错误。
+    // 【极简配置】移除 responseMimeType 和 responseSchema。
+    // 彻底解决 "Invalid JSON payload" 和 "Unknown name" 等 400 错误。
+    // 我们完全依赖 Prompt 来引导 JSON 输出。
     const body: any = {
         contents: [{
             parts: [{ text: prompt }]
         }],
         generationConfig: {
-            temperature: 0.4,
-            responseMimeType: "application/json"
+            temperature: 0.4
+            // 不传 MimeType，不传 Schema
         }
     };
 
@@ -91,8 +92,9 @@ const callGeminiApi = async (prompt: string) => {
                  throw new Error(`权限拒绝 (403): ${errorDetails}。请检查 Vercel 后台 API_KEY。`);
             }
             
+            // 如果还是 400，说明 Prompt 或者其他地方有严重问题
             if (response.status === 400) {
-                throw new Error(`请求格式错误 (400): ${errorDetails}。这通常意味着参数不兼容，代码已尝试自动降级。`);
+                throw new Error(`请求拒绝 (400): ${errorDetails}`);
             }
 
             throw new Error(`API 请求失败 (${response.status}): ${errorDetails}`);
@@ -104,17 +106,22 @@ const callGeminiApi = async (prompt: string) => {
         if (!text) throw new Error("AI 返回数据为空");
 
         // 【代码清洗】手动处理 Markdown 标记
+        // 这一步至关重要，因为我们移除了 JSON Mode，AI 可能会返回 ```json
         text = text.trim();
-        // 移除 ```json ... ```
         if (text.startsWith('```')) {
-            text = text.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+            // 移除开头的 ```json 或 ```
+            text = text.replace(/^```(json)?/i, '');
+            // 移除结尾的 ```
+            text = text.replace(/```$/, '');
+            text = text.trim();
         }
 
         return JSON.parse(text);
     } catch (error: any) {
         console.error("Gemini Error:", error);
+        // 如果 JSON 解析失败，提供更有用的提示
         if (error instanceof SyntaxError) {
-            throw new Error("AI 返回的数据不是有效的 JSON 格式，请重试。");
+            throw new Error("AI 返回的数据格式不正确 (JSON Parse Error)，请重试。");
         }
         throw error;
     }
